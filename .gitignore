@@ -16,3 +16,4 @@ __pycache__/
 papers/*.pdf
 
 *.csv
+.venv
