@@ -20,3 +20,6 @@ Variables:
 
 Velocity is already rotated to geographic east/north by CMEMS at download -- no further rotation needed.
 Always open lazy and slice to 65N+, target depth range before loading anything into memory.
+
+## \[River\] Discharge
+These files are gotten from ArcticGRO and contain the historical and current discharge data. they are used to calculate the flux values.
