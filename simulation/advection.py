@@ -47,12 +47,18 @@ def upwind_step(C, vx, vy, dx, dy, land_mask, dt, c_south_bnd=None):
     vy = np.where(np.isnan(vy), 0.0, vy)
 
     # --- guard against dx = 0 at the pole ---
+<<<<<<< HEAD
     dx_safe = np.maximum(dx, 1.0)
     # --- cap velocity to CFL <= 1 in every cell ---
     # near 90N dx is tiny (30m at 89.875N), giving extreme CFL at any
     # non-trivial velocity; also caps Bering Strait and other high-speed cells
     vx = np.sign(vx) * np.minimum(np.abs(vx), dx_safe / dt)
     vy = np.sign(vy) * np.minimum(np.abs(vy), dy     / dt)
+=======
+    # dx -> 0 at 90N; pole cell is land-masked so this only affects the
+    # zero-out at the end, but guard anyway to avoid NaN propagation
+    dx_safe = np.where(dx > 0.0, dx, 1.0)
+>>>>>>> 04d14f0 (added notes and the advection code)
 
     # --- shifted concentration arrays ---
 

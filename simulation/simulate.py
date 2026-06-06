@@ -64,7 +64,17 @@ DECAY_K       = np.log(2.0) / (HALF_LIFE_YR * 365.25 * 86400.0)  # s^-1
 DECAY_FACTOR  = np.exp(-DECAY_K * DT)   # dimensionless, applied each 6hr step
 # DECAY_FACTOR ~ 0.9999997 per step, ~0.9986 per month, ~0.870 per year
 
+nlat, nlon = 10, 20
+C = np.zeros((nlat, nlon))
+C[5, 5] = 1.0                          # point source
+vx = np.full((nlat, nlon), 100.0)      # 100 m/s eastward (fast for easy visual)
+vy = np.zeros((nlat, nlon))
+dx = np.full((nlat, nlon), 1000.0)
+dy = 1000.0
+land_mask = np.zeros((nlat, nlon), dtype=bool)
+dt = 5.0                               # CFL = 100*5/1000 = 0.5
 
+<<<<<<< HEAD
 def _dz(depth):
     """Layer thicknesses from TOPAZ4 depth level centres."""
     depth = np.asarray(depth, dtype=float)
@@ -296,3 +306,9 @@ def run():
 
 if __name__ == '__main__':
     run()
+=======
+for _ in range(4):
+    C = upwind_step(C, vx, vy, dx, dy, land_mask, dt)
+
+print(C[5, :])   # blob should have moved 2 cells right (100*5*4/1000 = 2)
+>>>>>>> 04d14f0 (added notes and the advection code)
