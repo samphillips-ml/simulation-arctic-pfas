@@ -77,9 +77,10 @@ def load_grid(topaz4_path):
     land_mask  = np.isnan(model_depth)                             # True = land
 # mask polar cap above 88N -- tiny dx cells cause numerical instability
 # on regular lat/lon grid; no observations exist above 88N in training data
-    POLAR_CAP_MASK_LAT = 86.0
+   # POLAR_CAP_MASK_LAT = 86.0
+   # land_mask[lat[:, np.newaxis].repeat(nlon, axis=1) >= POLAR_CAP_MASK_LAT] = True
+    POLAR_CAP_MASK_LAT = 89.0
     land_mask[lat[:, np.newaxis].repeat(nlon, axis=1) >= POLAR_CAP_MASK_LAT] = True
-
     # --- layer split ---
     # depth[19] = 200.0 m exactly; layer 1 includes 200m, layer 2 starts at 250m
     layer_split_idx = int(np.searchsorted(depth, LAYER_SPLIT_M))

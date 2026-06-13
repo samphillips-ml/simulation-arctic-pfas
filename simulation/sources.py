@@ -10,14 +10,33 @@ import pandas as pd
 
 # ------------------------------------------------------------------
 # river mouth coordinates
-# nearest ocean cell to approximate delta outlet, verified against
-# TOPAZ4 model_depth mask (all coordinates confirmed as ocean cells)
+# nearest ocean cell to approximate delta/bay outlet, verified against
+# TOPAZ4 model_depth mask (all coordinates confirmed as ocean cells).
+#
+# All ten coordinates checked against the TOPAZ4 land mask via
+# check_dvina_mask.py / check_new_river_mouths.py. Where the natural
+# delta/bay coordinate fell on land (common at 0.125 deg resolution for
+# narrow deltas), the nearest wet cell was used instead. All shifts are
+# well within the BOX_HALF=16 (~2 deg) injection box half-width, so the
+# injected signal still lands in the correct general shelf area.
+#
+# Special case -- NorthernDvina: TOPAZ4 masks the entire White Sea
+# basin (no wet cells found south of ~70.5N in 32-42E). Flux is injected
+# at the southernmost available Barents Sea cell, representing the
+# White Sea / Barents Sea exchange zone. Implied transport delay through
+# the White Sea is absorbed by bias correction. See DECISIONS.md sec. 9.
 # ------------------------------------------------------------------
 RIVER_MOUTHS = {
-    'Lena':      (74.000,  126.500),   # Laptev Sea outlet
-    'Yenisei':   (73.750,   82.000),   # Kara Sea outlet
-    'Ob':        (72.500,   73.625),   # Kara Sea outlet
-    'Mackenzie': (70.000, -134.000),   # Beaufort Sea outlet
+    'Lena':          (74.000,  126.500),   # Laptev Sea outlet
+    'Yenisei':       (73.750,   82.000),   # Kara Sea outlet
+    'Ob':            (72.500,   73.625),   # Kara Sea outlet
+    'Mackenzie':     (70.000, -134.000),   # Beaufort Sea outlet
+    'Kolyma':        (70.000,  162.125),   # Kolyma Gulf, East Siberian Sea
+    'Pechora':       (69.125,   54.000),   # Pechora Sea, Barents
+    'Yana':          (71.750,  136.500),   # Yana Bay, Laptev Sea
+    'Indigirka':     (71.750,  151.750),   # East Siberian Sea, off delta
+    'Olenek':        (73.500,  122.500),   # Olenek Bay, Laptev Sea
+    'NorthernDvina': (70.500,   38.250),   # White Sea masked; inject S. Barents
 }
 
 # 60N boundary concentrations (ng/L), applied to 0-200m inflow cells
@@ -65,10 +84,11 @@ def get_riverine_source(grid, year, month, riverine_df, dt):
     """
     Riverine source field for one timestep.
 
-    Flux is distributed evenly across ocean cells in a 5x5 box centred on
-    the nearest ocean cell to each river delta outlet. Distributing over a
-    box rather than a single cell prevents unrealistic concentration spikes
-    at the mouth; physically represents rapid delta mixing. Layer 1 depth
+    Flux is distributed evenly across ocean cells in a box centred on
+    the nearest ocean cell to each river delta/bay outlet (see
+    RIVER_MOUTHS for placement notes). Distributing over a box rather
+    than a single cell prevents unrealistic concentration spikes at the
+    mouth; physically represents rapid delta mixing. Layer 1 depth
     (200m) used as injection volume so source is diluted over the full
     surface layer rather than the ~1m surface skin.
 
@@ -170,8 +190,8 @@ def get_boundary_1d(grid, depth_m):
     """
     Prescribed 60N southern boundary concentration for one depth level.
 
-    Atlantic sector (-80 to 40E): 0.093 ng/L
-    Pacific sector  (>120E or <-120W): 0.083 ng/L
+    Atlantic sector (-80 to 40E): 0.032 ng/L
+    Pacific sector  (>120E or <-120W): 0.025 ng/L
     Transition zones: 0.0 ng/L (conservative)
     Below 200m: 0.0 ng/L (Yeung et al. 2017)
 
@@ -205,21 +225,25 @@ if __name__ == '__main__':
 
     data_dir  = os.path.join(os.path.dirname(__file__), '..', 'data')
     topaz4    = os.path.join(data_dir, 'topaz4_arctic_velocity_2004_2025.nc')
-    riv_csv   = os.path.join(data_dir, 'riverine_pfoa_flux.csv')
+    riv_csv   = os.path.join(data_dir, '..', 'experiment', 'riverine_pfoa_flux.csv')
     atm_csv   = os.path.join(data_dir, 'atmospheric_pfoa_deposition.csv')
 
     grid = load_grid(topaz4)
     riv_df = load_riverine(riv_csv)
     atm_df = load_atmospheric(atm_csv)
 
-    dt = 6 * 3600.0   # 6-hour timestep
+    dt = 6 * 3600.0   # 6-hour timestep, diagnostic only (actual sim dt
+                      # is passed in from simulate.py)
 
     # --- riverine ---
     S_riv = get_riverine_source(grid, 2004, 7, riv_df, dt)
     mouth_idx = _mouth_indices(grid)
     print('Riverine source (ng/L per 6hr step) at mouth cells, July 2004:')
     for river, (i, j) in mouth_idx.items():
-        print(f'  {river}: {S_riv[i, j]:.4f}  lat={grid["lat"][i]:.3f} lon={grid["lon"][j]:.3f}')
+        wet = not grid['land_mask'][i, j]
+        print(f'  {river:<14} {S_riv[i, j]:.4f}  '
+              f'lat={grid["lat"][i]:.3f} lon={grid["lon"][j]:.3f}  '
+              f'wet={wet}')
 
     # --- atmospheric ---
     S_atm = get_atmospheric_source(grid, 2004, atm_df, dt)
