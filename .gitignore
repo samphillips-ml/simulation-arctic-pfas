@@ -7,10 +7,18 @@ experiment/code/mitgcmuv
 data/*.nc
 data/*.bin
 data/*.csv
+data/*.xlsx
 
 __pycache__/
 *.pyc
 .env
+
+papers/*.pdf
+
+*.csv
+.venv
+.DS_Store
+
 .pfas-sim
 
 # simulation outputs
