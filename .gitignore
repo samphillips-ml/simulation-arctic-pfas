@@ -11,3 +11,11 @@ data/*.csv
 __pycache__/
 *.pyc
 .env
+.pfas-sim
+
+# simulation outputs
+*.png
+*.gif
+*.out
+*.nc
+*.err
