@@ -68,23 +68,31 @@ concentration is uniform year-round (only discharge varies seasonally).
 
 ---
 
-## 4. Sink Terms -- First-Order Decay
+## 4. Sink Terms -- None Applied (Conservative Tracer)
 
-**Decision:** First-order decay with k = ln(2) / (5 yr * 365.25 * 86400 s) applied
-each 6-hour timestep as a numerical stabilization term.
+**Decision:** No sink terms applied. PFOA treated as a fully conservative tracer
+(HALF_LIFE_YR = 99.0, effectively no decay).
+
+**Previous approach (superseded):** First-order decay with a 5-year half-life applied
+as a "numerical stabilization term."
 
 **Justification:** PFOA does not measurably degrade in seawater (hydrolysis half-life
->92 years; Scheringer et al. 2012). Real removal mechanisms (sediment burial, sea ice
-partitioning, advective export) are not parameterized due to lack of Arctic-specific
-rate constants. The decay term is a numerical stabilization prior, not a physical
-process representation. Its effect is subsumed into PINN bias correction. This follows
-the Ice-BCNet approach (Yuan et al. 2024, doi:10.1016/j.ocemod.2024.102326) of
-delegating unresolved sink processes to the learned correction.
+>92 years; Scheringer et al. 2012), consistent with treating it as conservative. Real
+removal mechanisms (sediment burial, sea ice partitioning, advective export) lack
+Arctic-specific rate constants and are not parameterized. Rather than impose an
+arbitrary numerical decay term to mask this, all sink processes are omitted entirely
+and delegated to PINN bias correction -- following the Ice-BCNet approach (Yuan et al.
+2024, doi:10.1016/j.ocemod.2024.102326) of delegating unresolved processes to the
+learned correction, applied here as a clean omission rather than a placeholder decay
+rate.
 
-**Limitation:** Not physically motivated. Half-life of 5 years is arbitrary. Sensitivity
-analysis across half-life values (2, 5, 10, 50 yr) should be reported. Fram Strait
-net export of 6.4 +/- 1.0 t/yr PFOA (Joerss et al. 2020) used as Phase 3 validation
-target for simulated advective export rather than as a prescribed sink.
+**Limitation:** Simulation will tend to overestimate concentrations relative to
+observations in regions/depths where real removal processes are significant, since
+nothing in the model removes mass except advective export at boundaries. This is
+expected and intentional; the bias correction is responsible for learning the
+spatial/temporal pattern of this overestimation. Fram Strait net export of 6.4 +/- 1.0
+t/yr PFOA (Joerss et al. 2020) remains the Phase 3 validation target for simulated
+advective export (see Section 8), computed diagnostically rather than prescribed.
 
 ---
 
@@ -121,14 +129,43 @@ for PINN training against sparse observations.
 
 ---
 
-## 7. Atmospheric Deposition
+## 7. Atmospheric Deposition -- Not Represented
 
-**Decision:** MacInnis et al. 2017 (doi:10.1039/c6em00593d) Table S10 Devon Ice Cap
-values 1993-2007, held constant at 2004-2007 mean (~72 ng/m2/yr) post-2007.
+**Decision:** No atmospheric deposition term included.
 
-**Justification:** Only available multi-decadal Arctic atmospheric PFOA deposition
-record. Post-2007 constant follows Yeung et al. 2017 precedent. Atmospheric input
-~1 t/yr total, minor relative to riverine (~14.8 t/yr) and boundary inflow.
+**Previous approach (superseded):** MacInnis et al. 2017 (doi:10.1039/c6em00593d)
+Table S10 Devon Ice Cap values 1993-2007, held constant at 2004-2007 mean (~72
+ng/m2/yr) post-2007, characterized as "minor relative to riverine (~14.8 t/yr)."
+
+**Justification:** A single ice core record (Devon) extrapolated pan-Arctic and held
+constant for ~18 years is not a defensible spatially- or temporally-resolved flux
+estimate, and the "minor" characterization does not hold up against independent
+evidence: Yeung et al. 2017 (doi:10.1021/acs.est.7b00788) modeled atmospheric inputs
+as accounting for 34-59% (~11-19 pg/L) of measured PFOA concentration in the polar
+mixed layer (mean 32 +/- 15 pg/L). This is a substantial fraction of surface-layer
+PFOA, not a second-order term -- so including a weak, single-source deposition
+estimate would add a spatially uniform term whose own magnitude is highly uncertain,
+without clearly improving the prior. The residual (obs - sim) already reflects the
+true missing atmospheric contribution whether or not a deposition term is explicitly
+modeled. Atmospheric deposition is therefore omitted entirely, consistent with the
+Section 4 sink-term philosophy: processes lacking a defensible flux estimate are
+delegated to bias correction rather than included as placeholders.
+
+**Limitation:** Atmospheric deposition is a known, literature-supported, but currently
+unquantifiable input, expected to contribute to underestimation of surface-layer
+(0-200m) PFOA concentrations and is a plausible partial explanation for the observed
+basin-mean underestimate (~2-2.5x). Should be discussed explicitly in the limitations
+section. If PINN residuals show depth- or season-structured patterns consistent with
+atmospheric input (e.g. concentrated in the surface layer, correlated with
+sea-ice/precipitation seasonality), this would be indirect evidence the omission
+matters -- a citable finding in its own right.
+
+**Note:** Sections 4 and 7 pull in opposite directions on the basin-mean bias: no
+sink terms pushes the simulation toward overestimation, while no atmospheric
+deposition pushes toward underestimation (especially in the surface layer). These
+two omissions partially offset in their net effect on the mean, though they operate
+through different mechanisms and at different depths -- worth stating explicitly in
+the methods/limitations text.
 
 ---
 
@@ -143,3 +180,48 @@ climatological constraint. Prescribing it as a boundary condition would be circu
 simulated PFOA flux through Fram Strait cells (78-80N, 10W-10E) will be computed
 from C * vy * dx * dz and compared to 6.4 t/yr as a diagnostic validation check
 in Phase 3.
+
+---
+
+### 9a. River Mouth Coordinates and TOPAZ4 Mask Verification
+
+All ten river injection coordinates were checked against the TOPAZ4 land
+mask (0.125 deg resolution) using check_dvina_mask.py and
+check_new_river_mouths.py. At this resolution, narrow deltas and bays are
+frequently masked as land; where the natural delta/bay coordinate fell on
+land, the nearest wet cell was used instead. All shifts are well within
+the BOX_HALF=16 (~2 deg) injection box half-width (sec. 2), so the
+injected signal still lands within the intended shelf region regardless
+of the shift.
+
+| River          | Coordinate used      | Notes                                          | Shift from natural mouth |
+|-----------------|----------------------|-------------------------------------------------|---------------------------|
+| Lena            | 74.000N, 126.500E    | Laptev Sea outlet (original config)             | --                          |
+| Yenisei         | 73.750N,  82.000E    | Kara Sea outlet (original config)               | --                          |
+| Ob              | 72.500N,  73.625E    | Kara Sea outlet (original config)               | --                          |
+| Mackenzie       | 70.000N, -134.000E   | Beaufort Sea outlet (original config)           | --                          |
+| Pechora         | 69.125N,  54.000E    | Pechora Sea, Barents                            | 0.13 deg                    |
+| Yana            | 71.750N, 136.500E    | Yana Bay, Laptev Sea                            | 0.25 deg                    |
+| Olenek          | 73.500N, 122.500E    | Olenek Bay, Laptev Sea (west of Lena delta)     | 0.71 deg                    |
+| Kolyma          | 70.000N, 162.125E    | Kolyma Gulf, East Siberian Sea                  | 0.80 deg                    |
+| Indigirka       | 71.750N, 151.750E    | East Siberian Sea, off delta                    | 1.21 deg                    |
+| NorthernDvina   | 70.500N,  38.250E    | Southernmost Barents cell; White Sea masked     | n/a -- see sec. 9 note      |
+
+**Indigirka note:** the 1.21 deg shift is the largest of the five new
+rivers. The natural delta coordinate (~71.0N, 150.8E) and surrounding area
+are masked as land in TOPAZ4 -- likely reflecting a broad shallow/deltaic
+region not resolved at 0.125 deg. The nearest wet cell at 71.75N, 151.75E
+is still on the East Siberian Sea shelf and within the injection box
+range of the intended outlet, so the spatial intent (ESS shelf signal) is
+preserved.
+
+**Olenek note:** placed west of the Lena delta (73.5N, 122.5E) vs Lena's
+own mouth at 74.0N, 126.5E -- a separation of roughly 4 deg longitude,
+sufficient that the two rivers' 33x33 injection boxes do not fully
+overlap, preserving them as distinct spatial sources.
+
+No formal literature citation is required for mouth/bay coordinates
+themselves (geographic fact, not a contested estimate). The methods
+section should state that all injection coordinates were verified against
+the TOPAZ4 land mask, with the table above available as supplementary
+detail if needed.

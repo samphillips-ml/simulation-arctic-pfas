@@ -225,7 +225,7 @@ if __name__ == '__main__':
 
     data_dir  = os.path.join(os.path.dirname(__file__), '..', 'data')
     topaz4    = os.path.join(data_dir, 'topaz4_arctic_velocity_2004_2025.nc')
-    riv_csv   = os.path.join(data_dir, '..', 'experiment', 'riverine_pfoa_flux.csv')
+    riv_csv   = os.path.join(data_dir, 'riverine_pfoa_flux.csv')
     atm_csv   = os.path.join(data_dir, 'atmospheric_pfoa_deposition.csv')
 
     grid = load_grid(topaz4)
