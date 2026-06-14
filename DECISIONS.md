@@ -92,26 +92,46 @@ nothing in the model removes mass except advective export at boundaries. This is
 expected and intentional; the bias correction is responsible for learning the
 spatial/temporal pattern of this overestimation. Fram Strait net export of 6.4 +/- 1.0
 t/yr PFOA (Joerss et al. 2020) remains the Phase 3 validation target for simulated
-advective export (see Section 8), computed diagnostically rather than prescribed.
+advective export (see Section 8), computed diagnostically rather than prescribed --
+though see Section 8 for an important caveat on what this comparison can and cannot
+establish given this decision.
+
+The largest single omitted sink -- shelf sediment sorption/burial -- would be spatially
+concentrated on the same Arctic shelves (Kara, Laptev, East Siberian, Beaufort) where
+riverine injection occurs and where in-situ observational coverage is weakest (the
+Russian-sector data gap). The spatial pattern of this omission is therefore plausibly
+correlated with the spatial pattern of the training data gap, which may limit the
+bias correction's ability to learn this term even where it matters most.
 
 ---
 
 ## 5. Polar Cap Mask
 
-**Decision:** Grid cells above 88N treated as land (land_mask = True).
+**Decision:** Grid cells above 89N treated as land (land_mask = True).
+
+**Previous value:** 88N. Raised to 89N after confirming the Transpolar Drift signal
+was largely absent from the tracer field at 88N -- the mask was removing too much of
+the polar cap and blocking a major Arctic transport pathway. At 89N the TPD signal is
+visible in the tracer field. Numerical stability confirmed at 89N for the full run.
 
 **Justification:** Regular lat/lon grids have a coordinate singularity at 90N where
 zonal cell width dx -> 0. Despite velocity capping (CFL <= 1), tracer accumulates
 in the polar convergence zone due to the velocity sink at the pole -- all currents
 converge but none escape. Diagnostic output confirmed exponential blowup originating
-at 89-90N starting month 13, with the polar cap acting as a tracer trap. Masking
-above 88N removes the singularity. TOPAZ4 uses a bipolar grid natively to avoid
-this issue; the regular lat/lon interpolated output re-introduces it.
+at the pole in early test configurations, with the polar cap acting as a tracer trap.
+Masking above 89N removes the singularity while preserving the TPD pathway. TOPAZ4
+uses a bipolar grid natively to avoid this issue; the regular lat/lon interpolated
+output re-introduces it.
 
-**Limitation:** Removes ~0.5% of domain area. No training observations exist above
-88N so PINN is unaffected. Tipton 2025 expedition includes North Pole depth profiles
-whose latitude is unknown; if any are above 88N they cannot be used for validation.
-Future work should implement advection on TOPAZ4 native bipolar grid.
+**Limitation:** Removes a small fraction of domain area (<0.5%) immediately
+surrounding the pole. No training observations exist above 89N so PINN training is
+unaffected. Tipton 2025 expedition includes North Pole depth profiles whose exact
+latitude is unknown; if any are above 89N they cannot be used for validation.
+Representing the TPD pathway fully (i.e. removing the mask entirely) would require
+implementing advection on TOPAZ4's native bipolar grid -- flagged as future work, not
+pursued here given the scope of regridding the advection scheme relative to remaining
+project time. The current 89N mask is judged to capture the TPD pathway adequately
+for this purpose.
 
 ---
 
@@ -181,6 +201,23 @@ simulated PFOA flux through Fram Strait cells (78-80N, 10W-10E) will be computed
 from C * vy * dx * dz and compared to 6.4 t/yr as a diagnostic validation check
 in Phase 3.
 
+**Caveat (given Section 4 -- no sink terms):** Bias correction operates on the
+concentration field at observation locations; it does not enforce a global mass
+balance. With no sink terms, the simulation's total PFOA inventory has no removal
+mechanism other than advective export at the open boundaries, so the basin-wide
+inventory is expected to be systematically high. The bias-corrected concentration
+field may still carry this elevated-inventory signature into the Fram Strait export
+calculation, particularly in regions upstream of Fram Strait with sparse training
+observations to constrain the correction. Agreement (or disagreement) between the
+corrected simulated export and the Joerss 6.4 +/- 1.0 t/yr target should therefore be
+interpreted primarily as a check on transport pathway/timing fidelity, conditional on
+the no-sink inventory bias -- not as an independent validation of the corrected
+field's absolute accuracy. Additionally, Joerss 2020 measures total (dissolved +
+particulate/ice-associated) export; the simulation represents dissolved-phase
+advection only, so sea-ice-mediated export (a real pathway not captured here) is a
+further reason the two quantities may not be directly comparable even with a perfect
+correction.
+
 ---
 
 ### 9a. River Mouth Coordinates and TOPAZ4 Mask Verification
@@ -225,3 +262,37 @@ themselves (geographic fact, not a contested estimate). The methods
 section should state that all injection coordinates were verified against
 the TOPAZ4 land mask, with the table above available as supplementary
 detail if needed.
+
+---
+
+## 10. Advection Scheme -- First-Order Upwind
+
+**Decision:** First-order upwind finite-difference advection, applied per layer
+(Section 6), with velocity capping for CFL <= 1.
+
+**Justification:** First-order upwind is numerically diffusive but unconditionally
+monotonic -- it cannot produce negative concentrations or spurious overshoots near
+sharp gradients (e.g. at river-mouth injection cells, Section 2). This matters
+specifically because PFOA concentration is physically non-negative and is expected
+to be log-transformed for PINN training (concentrations span orders of magnitude);
+a scheme that occasionally produces small negative values near steep gradients would
+be incompatible with that pipeline without ad hoc clipping.
+
+Higher-order TVD schemes with flux limiters (e.g. MUSCL, Superbee, van Leer) are
+more accurate for tracer transport and are arguably more "standard" for this class
+of problem -- they substantially reduce numerical diffusion while retaining
+monotonicity via the limiter. These were considered but not adopted given remaining
+project time: the river injection box size (Section 2, BOX_HALF=16) was tuned against
+upwind's diffusive behavior, and switching schemes this late would require rerunning
+the full 264-month simulation and re-verifying stability (a less diffusive scheme
+could behave differently near the injection boxes and polar cap mask, in ways not
+yet characterized).
+
+**Limitation:** Numerical diffusion from the upwind scheme is expected to smear sharp
+tracer features (e.g. river plume filaments) over a wider area than physically
+realistic, lowering peak concentrations and broadening gradients. This is a smooth,
+spatially-coherent bias (more pronounced where gradients are steep, e.g. near river
+mouths and the ice edge) and is treated as part of the systematic error the bias
+correction is designed to absorb, consistent with the overall framing of the
+simulation as an intentionally imperfect physics prior. TVD schemes are flagged as
+future work if a later iteration of the simulation is undertaken.

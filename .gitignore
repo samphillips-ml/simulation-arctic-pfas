@@ -27,3 +27,6 @@ papers/*.pdf
 *.out
 *.nc
 *.err
+# temp files for debugging
+frame_preview.py
+presentation_video.py

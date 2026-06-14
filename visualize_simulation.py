@@ -2,8 +2,10 @@
 visualize_simulation.py
 
 Animated GIF of Arctic PFOA layer 1 concentration in North Polar
-Stereographic projection. Colorscale clipped to show meaningful
-variation above atmospheric background (~0.01 ng/L floor).
+Stereographic projection. Colorscale spans the full range of
+positive concentrations (no floor -- atmospheric deposition is not
+represented in this simulation, so there is no "background" value
+to clip against).
 
 Usage:
     python simulation/visualize_simulation.py
@@ -42,19 +44,20 @@ C1 = C1_raw.astype(float)
 C1[~np.isfinite(C1)] = np.nan
 C1[C1 <= 0.0] = np.nan
 
-# clip lower end: anything below 0.01 ng/L is atmospheric background noise
-# clip upper end: 99th percentile to avoid blowup cells dominating scale
-C_FLOOR = 0.01   # ng/L -- below this = background, shown as ocean color
-finite   = C1[np.isfinite(C1) & (C1 > C_FLOOR)]
-vmin_lin = C_FLOOR
+# colorscale spans the full positive range of the data (no floor):
+# vmin = smallest positive concentration, vmax = 99th percentile
+# (99th percentile still used on the upper end to avoid blowup cells
+# at river-mouth injection points dominating the scale)
+finite   = C1[np.isfinite(C1)]
+vmin_lin = float(np.nanmin(finite)) if len(finite) > 0 else 1e-6
 vmax_lin = float(np.nanpercentile(finite, 99)) if len(finite) > 0 else 1.0
 
 # use log10 colorscale
-vmin = np.log10(vmin_lin)   # log10(0.01) = -2
+vmin = np.log10(vmin_lin)
 vmax = np.log10(vmax_lin)
-print(f'  colorscale: {vmin_lin:.3f} to {vmax_lin:.3f} ng/L  (log10: {vmin:.1f} to {vmax:.1f})')
+print(f'  colorscale: {vmin_lin:.3e} to {vmax_lin:.3f} ng/L  (log10: {vmin:.1f} to {vmax:.1f})')
 
-C1_log = np.where(C1 > C_FLOOR, np.log10(C1), np.nan)
+C1_log = np.log10(C1)
 
 # 2D meshgrid for pcolormesh
 dlat = float(lat[1] - lat[0])
@@ -98,8 +101,6 @@ cbar = fig.colorbar(mesh, ax=ax_map, fraction=0.04, pad=0.04,
                     shrink=0.7, ticks=tick_vals)
 cbar.set_label('PFOA (ng/L)', fontsize=10)
 cbar.ax.set_yticklabels([f'$10^{{{int(v)}}}$' for v in tick_vals])
-cbar.ax.text(0.5, -0.02, f'floor: {C_FLOOR} ng/L', transform=cbar.ax.transAxes,
-             fontsize=7, ha='center', va='top', color='gray')
 
 title = ax_map.set_title('', fontsize=11, fontweight='bold', pad=8)
 
