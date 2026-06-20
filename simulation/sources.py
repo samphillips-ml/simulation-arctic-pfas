@@ -1,8 +1,9 @@
 """
 sources.py
 Source term computation for Arctic PFOA simulation.
-Provides riverine injection, atmospheric deposition, and 60N boundary
-concentration fields. All concentrations in ng/L.
+Provides riverine injection, atmospheric deposition, Bering Strait
+inflow, and 60N Atlantic boundary concentration fields. All
+concentrations in ng/L.
 """
 
 import numpy as np
@@ -39,11 +40,46 @@ RIVER_MOUTHS = {
     'NorthernDvina': (70.500,   38.250),   # White Sea masked; inject S. Barents
 }
 
-# 60N boundary concentrations (ng/L), applied to 0-200m inflow cells
+# 60N boundary concentration (ng/L), applied to 0-200m inflow cells.
+# Atlantic sector only -- the Pacific sector at 60N is now land
+# (Bering Sea masked, see grid_utils.py), so the Pacific branch that
+# used to live here has been replaced by the Bering Strait source term
+# below. See DECISIONS.md sec. 10.
 # Atlantic sector mean: Benskin 2012 (Labrador Sea) + Joerss 2020 (Norwegian coast)
-# Pacific sector: Li 2018 Bering Sea regional mean (n=1 regional estimate)
 BOUNDARY_ATLANTIC_NGPL = 0.032
-BOUNDARY_PACIFIC_NGPL  = 0.025
+
+# ------------------------------------------------------------------
+# Bering Strait inflow concentration
+#
+# Central value 0.05 ng/L (50 pg/L), converging estimate from two
+# independent PFOA-specific surface-seawater datasets for the
+# Pacific-inflow / western Arctic water mass:
+#   - Cai et al. 2012 (Environ. Sci. Technol. 46(2):661-668,
+#     doi:10.1021/es2026278): North Pacific PFOA average 56 pg/L,
+#     range <20-100 pg/L.
+#   - Yamazaki et al. 2021 (Chemosphere 272:129869,
+#     doi:10.1016/j.chemosphere.2020.128803): western Arctic Ocean
+#     PFOA 48-87 pg/L.
+# Sensitivity bounds span the low end of Cai (<20 pg/L) and the high
+# end of Yamazaki (87 pg/L), rounded to 0.02 and 0.09 ng/L.
+# See DECISIONS.md sec. 10 for full derivation and caveats (no
+# strait-specific measurement exists; both sources are regional
+# proxies for the water mass transiting the strait; values are
+# 2010-2014-era and may slightly overestimate current PFOA given the
+# US EPA PFOA Stewardship Program phase-down).
+# ------------------------------------------------------------------
+BERING_PFOA_NGPL          = 0.05    # central value, ng/L
+BERING_PFOA_NGPL_LOW      = 0.02    # sensitivity bound, ng/L
+BERING_PFOA_NGPL_HIGH     = 0.09    # sensitivity bound, ng/L
+
+# Bering Strait throat cells -- narrow lat/lon band spanning the real
+# strait pinch point (~65.7N, 168.5-169.5W) with a small buffer either
+# side to catch however TOPAZ4 resolves the channel at 0.125 deg.
+# Must sit north of grid_utils.BERING_SEA_LAT_MAX so the cells survive
+# land-masking. Re-check against actual wet cells before treating as
+# final -- see grid_utils.py __main__ self-check.
+BERING_STRAIT_LAT_RANGE = (65.5, 66.2)
+BERING_STRAIT_LON_RANGE = (-170.5, -167.0)
 
 
 def _compute_dz(depth):
@@ -68,6 +104,22 @@ def _mouth_indices(grid):
         j = int(np.argmin(np.abs(grid['lon'] - rlon)))
         out[river] = (i, j)
     return out
+
+
+def _bering_strait_cells(grid):
+    """
+    Return (i_idx, j_idx) arrays of wet-cell indices within the Bering
+    Strait throat box. Computed fresh each call rather than cached --
+    cheap (small box) and avoids stale-index bugs if grid changes.
+    """
+    lat_mask = ((grid['lat'] >= BERING_STRAIT_LAT_RANGE[0]) &
+                (grid['lat'] <= BERING_STRAIT_LAT_RANGE[1]))
+    lon_mask = ((grid['lon'] >= BERING_STRAIT_LON_RANGE[0]) &
+                (grid['lon'] <= BERING_STRAIT_LON_RANGE[1]))
+    box = lat_mask[:, np.newaxis] & lon_mask[np.newaxis, :]
+    wet = box & (~grid['land_mask'])
+    i_idx, j_idx = np.where(wet)
+    return i_idx, j_idx
 
 
 def load_riverine(csv_path):
@@ -106,8 +158,8 @@ def get_riverine_source(grid, year, month, riverine_df, dt):
     S  = np.zeros((grid['nlat'], grid['nlon']))
     dz_layer1  = 200.0                         # layer 1 thickness (m)
     BOX_HALF   = 16                            # 33x33 injection box half-width
-
     seconds_per_month = (365.25 / 12.0) * 86400.0
+
     mouth_idx = _mouth_indices(grid)
 
     rows = riverine_df[
@@ -119,8 +171,8 @@ def get_riverine_source(grid, year, month, riverine_df, dt):
         river = row['river']
         if river not in mouth_idx:
             continue
-
         i, j = mouth_idx[river]
+
         flux_kg_month = row['pfoa_flux_kg_month']
         if pd.isna(flux_kg_month):
             continue
@@ -174,15 +226,85 @@ def get_atmospheric_source(grid, year, atmos_df, dt):
     row = atmos_df[atmos_df['year'] == year]
     if len(row) == 0:
         return S
-    flux_ng_m2_yr = float(row.iloc[0]['pfoa_deposition_ng_m2_yr'])
 
+    flux_ng_m2_yr = float(row.iloc[0]['pfoa_deposition_ng_m2_yr'])
     seconds_per_year  = 365.25 * 86400.0
     flux_ng_m2_step   = flux_ng_m2_yr * (dt / seconds_per_year)
 
-    # ng/m² -> ng/L: divide by surface layer depth (m) and unit conversion
+    # ng/m^2 -> ng/L: divide by surface layer depth (m) and unit conversion
     delta_C = flux_ng_m2_step / (dz_surface * 1000.0)
-
     S[~grid['land_mask']] = delta_C
+    return S
+
+
+def get_bering_strait_source(grid, vx, vy, dt, c_strait=BERING_PFOA_NGPL):
+    """
+    Bering Strait inflow source field for one timestep.
+
+    Replaces the old diffuse 60N Pacific boundary. The Bering Sea south
+    of the strait is now land-masked (grid_utils.py), so the strait
+    throat cells are the sole Pacific-side opening into the domain.
+
+    Mechanism: injects mass at strait throat cells sized as
+        concentration x inflow velocity x cross-sectional area x dt
+    using the live TOPAZ4 velocity field for that month, restricted to
+    cells with net northward (into-domain) flow. This is a source-term
+    approximation rather than a true clamped open boundary (the
+    upwind_step southern-boundary mechanism in advection.py only
+    operates at the fixed domain edge, lat index 0 / 60N, and cannot
+    prescribe inflow concentration at an interior latitude without
+    restructuring the advection scheme -- see DECISIONS.md sec. 10 for
+    the tradeoff discussion). Outflow cells (vy <= 0, water leaving the
+    domain southward through the strait) are left untouched; advection
+    handles outflow via the normal upwind scheme.
+
+    Parameters
+    ----------
+    grid     : dict from grid_utils.load_grid()
+    vx, vy   : (nlat, nlon) float, layer 1 depth-weighted mean velocity
+               in m/s (NaN over land). Same arrays simulate.py already
+               computes for the advection step this timestep.
+    dt       : float, timestep in seconds
+    c_strait : float, prescribed inflow concentration in ng/L
+               (default BERING_PFOA_NGPL; pass BERING_PFOA_NGPL_LOW/HIGH
+               for sensitivity runs)
+
+    Returns
+    -------
+    S : (nlat, nlon) ng/L to add to layer 1 concentration field.
+    """
+    S = np.zeros((grid['nlat'], grid['nlon']))
+    dz_layer1 = 200.0   # layer 1 thickness (m), consistent with rivers
+
+    i_idx, j_idx = _bering_strait_cells(grid)
+    if len(i_idx) == 0:
+        # strait throat fully masked -- almost certainly a mask bounds
+        # bug (see grid_utils.py __main__ self-check), not a real state
+        return S
+
+    vy_strait = vy[i_idx, j_idx]
+    vy_strait = np.where(np.isnan(vy_strait), 0.0, vy_strait)
+    inflow = vy_strait > 0.0   # northward = into the domain
+
+    if not np.any(inflow):
+        return S
+
+    ii = i_idx[inflow]
+    jj = j_idx[inflow]
+    v_in = vy_strait[inflow]   # m/s, positive northward
+
+    # volume flux through each cell's northern face this step (L)
+    cell_dx = grid['dx'][ii, jj]
+    vol_L_step = v_in * cell_dx * dz_layer1 * dt * 1000.0
+
+    # mass injected (ng), then converted to a concentration bump in
+    # that cell's own volume (same convention as get_riverine_source:
+    # cell_vol_L is the receiving cell's volume, not the flux volume)
+    mass_ng = c_strait * vol_L_step   # ng/L x L = ng
+
+    cell_vol_L = cell_dx * grid['dy'] * dz_layer1 * 1000.0
+    S[ii, jj] += mass_ng / cell_vol_L
+
     return S
 
 
@@ -190,9 +312,11 @@ def get_boundary_1d(grid, depth_m):
     """
     Prescribed 60N southern boundary concentration for one depth level.
 
-    Atlantic sector (-80 to 40E): 0.032 ng/L
-    Pacific sector  (>120E or <-120W): 0.025 ng/L
-    Transition zones: 0.0 ng/L (conservative)
+    Atlantic sector only (-80 to 40E): 0.032 ng/L
+    Everywhere else at 60N: 0.0 ng/L -- the Pacific sector is now land
+    (Bering Sea masked south of the strait), so there is no Pacific
+    inflow at the 60N domain edge anymore. Pacific inflow enters via
+    get_bering_strait_source() instead. See DECISIONS.md sec. 10.
     Below 200m: 0.0 ng/L (Yeung et al. 2017)
 
     Parameters
@@ -211,11 +335,7 @@ def get_boundary_1d(grid, depth_m):
         return c_bnd
 
     atlantic = (lon >= -80.0) & (lon <= 40.0)
-    pacific  = (lon >  120.0) | (lon < -120.0)
-
     c_bnd[atlantic] = BOUNDARY_ATLANTIC_NGPL
-    c_bnd[pacific]  = BOUNDARY_PACIFIC_NGPL
-
     return c_bnd
 
 
@@ -233,7 +353,7 @@ if __name__ == '__main__':
     atm_df = load_atmospheric(atm_csv)
 
     dt = 6 * 3600.0   # 6-hour timestep, diagnostic only (actual sim dt
-                      # is passed in from simulate.py)
+                       # is passed in from simulate.py)
 
     # --- riverine ---
     S_riv = get_riverine_source(grid, 2004, 7, riv_df, dt)
@@ -252,11 +372,33 @@ if __name__ == '__main__':
     print(f'  uniform ocean value: {ocean_vals[0]:.6e}')
     print(f'  land cells: {(S_atm[grid["land_mask"]] == 0).all()} (all zero)')
 
+    # --- Bering Strait ---
+    i_idx, j_idx = _bering_strait_cells(grid)
+    print(f'\nBering Strait throat: {len(i_idx)} wet cells in box '
+          f'lat={BERING_STRAIT_LAT_RANGE} lon={BERING_STRAIT_LON_RANGE}')
+    if len(i_idx) > 0:
+        print(f'  lat range of wet cells: '
+              f'{grid["lat"][i_idx].min():.3f} - {grid["lat"][i_idx].max():.3f}')
+        print(f'  lon range of wet cells: '
+              f'{grid["lon"][j_idx].min():.3f} - {grid["lon"][j_idx].max():.3f}')
+        # diagnostic source call with a plausible northward velocity
+        # to confirm the function produces sane magnitudes
+        vx_test = np.full((grid['nlat'], grid['nlon']), np.nan)
+        vy_test = np.full((grid['nlat'], grid['nlon']), np.nan)
+        vy_test[i_idx, j_idx] = 0.3   # m/s, plausible strait inflow speed
+        S_bering = get_bering_strait_source(grid, vx_test, vy_test, dt)
+        nz = S_bering[i_idx, j_idx]
+        print(f'  diagnostic S at 0.3 m/s inflow (ng/L per 6hr step): '
+              f'min={nz.min():.6f} max={nz.max():.6f} mean={nz.mean():.6f}')
+    else:
+        print('  WARNING: no wet cells found -- check BERING_STRAIT_LAT_RANGE '
+              'against grid_utils.BERING_SEA_LAT_MAX, the mask may have '
+              'sealed the strait shut')
+
     # --- boundary ---
     print('\n60N boundary concentration (ng/L):')
     for depth_m in [0.0, 100.0, 200.0, 250.0]:
         c = get_boundary_1d(grid, depth_m)
         atl = c[(grid['lon'] >= -80) & (grid['lon'] <= 40)]
-        pac = c[(grid['lon'] > 120) | (grid['lon'] < -120)]
         print(f'  depth={depth_m}m  atlantic={atl[atl>0].mean() if len(atl[atl>0]) else 0:.3f}'
-              f'  pacific={pac[pac>0].mean() if len(pac[pac>0]) else 0:.3f}')
+              f'  (pacific sector now land -- see Bering Strait source above)')

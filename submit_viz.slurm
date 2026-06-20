@@ -20,7 +20,7 @@ set -euo pipefail
 cd $SLURM_SUBMIT_DIR
 source .pfas-sim/bin/activate
 export PYTHONPATH=$SLURM_SUBMIT_DIR${PYTHONPATH:+:$PYTHONPATH}
-
+module load ffmpeg
 echo "Python : $(which python)"
 echo "ffmpeg : $(which ffmpeg || echo 'NOT FOUND')"
 

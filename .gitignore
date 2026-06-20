@@ -30,3 +30,4 @@ papers/*.pdf
 # temp files for debugging
 frame_preview.py
 presentation_video.py
+*.mp4

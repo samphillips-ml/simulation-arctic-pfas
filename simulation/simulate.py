@@ -16,6 +16,12 @@ Sink term: first-order decay with 5-year half-life, applied each timestep.
   with Ice-BCNet (Yuan et al. 2024) approach of omitting detailed sinks
   from the forward model.
 
+Bering Strait inflow: the Bering Sea south of the strait is land-masked
+(grid_utils.py); the strait throat is now the sole Pacific-side opening
+into the domain, driven by a velocity-weighted source term (sources.py
+get_bering_strait_source) rather than the old diffuse 60N Pacific
+boundary. See DECISIONS.md sec. 10.
+
 Output (Option B):
   - Monthly layer-mean concentration fields (nlat x nlon)
   - Monthly concentration at observation station locations
@@ -32,7 +38,7 @@ from grid_utils import load_grid
 from advection import upwind_step
 from sources import (load_riverine, load_atmospheric,
                      get_riverine_source, get_atmospheric_source,
-                     get_boundary_1d)
+                     get_bering_strait_source, get_boundary_1d)
 
 # ------------------------------------------------------------------
 # paths (relative to repo root)
@@ -73,16 +79,6 @@ def _dz(depth):
 def layer_mean_velocity(vx_all, vy_all, layer_idxs, dz):
     """
     Depth-weighted mean velocity over a layer.
-
-    Parameters
-    ----------
-    vx_all, vy_all : (ndepth, nlat, nlon) float, NaN over land
-    layer_idxs     : slice
-    dz             : (ndepth,) float, level thicknesses in metres
-
-    Returns
-    -------
-    vx_mean, vy_mean : (nlat, nlon), NaN over land
     """
     vx = vx_all[layer_idxs]
     vy = vy_all[layer_idxs]
@@ -101,12 +97,6 @@ def layer_mean_velocity(vx_all, vy_all, layer_idxs, dz):
 def apply_diffusion(C1, C2, grid, dt):
     """
     Diffusive exchange between layer 1 (0-200m) and layer 2 (200m+).
-
-    Physics:
-        dC1/dt = -kappa_v * (C1 - C2) / (dz_grad * H1)
-        dC2/dt = +kappa_v * (C1 - C2) / (dz_grad * H2)
-    where dz_grad = H1/2 + H2/2 (gradient length scale between layer centres).
-    kappa_v = 1e-5 m2/s (background diapycnal diffusivity).
     """
     H2      = np.maximum(grid['model_depth'] - H1, 0.0)
     active  = (~grid['land_mask']) & (H2 > 0.0)
@@ -135,13 +125,11 @@ def load_stations(obs_csv, grid):
           .rename(columns={'lat': 'obs_lat', 'lon': 'obs_lon'}))
     st['station_id'] = st.index
 
-    # snap to nearest OCEAN cell (not land)
     ocean_i, ocean_j = np.where(~grid['land_mask'])
 
     def snap_to_ocean(obs_lat, obs_lon):
         dlat = grid['lat'][ocean_i] - obs_lat
         dlon = grid['lon'][ocean_j] - obs_lon
-        # handle longitude wrapping
         dlon = np.where(dlon > 180, dlon - 360, dlon)
         dlon = np.where(dlon < -180, dlon + 360, dlon)
         dist = dlat**2 + dlon**2
@@ -152,6 +140,7 @@ def load_stations(obs_csv, grid):
     st['i'] = [x[0] for x in ij]
     st['j'] = [x[1] for x in ij]
     return st
+
 
 def create_output(path, grid, stations):
     """Initialise output NetCDF4 file. Returns open Dataset."""
@@ -199,6 +188,10 @@ def create_output(path, grid, stations):
     ds.decay_k      = f'{DECAY_K:.4e} s^-1 (5-yr half-life lumped sink)'
     ds.layer1       = '0-200m depth-weighted mean velocity'
     ds.layer2       = '250-4000m depth-weighted mean velocity'
+    ds.bering_strait = ('Pacific inflow via Bering Strait source term '
+                         '(sources.get_bering_strait_source), replacing '
+                         'old diffuse 60N Pacific boundary; Bering Sea '
+                         'south of strait is land-masked. See DECISIONS.md sec. 10.')
 
     return ds
 
@@ -219,7 +212,9 @@ def run():
     stations = load_stations(OBS_CSV, grid)
     print(f'  {len(stations)} unique PFOA stations above 60N')
 
-    # static boundary concentrations
+    # static boundary concentrations (Atlantic sector only -- Pacific
+    # sector at 60N is now land; Pacific inflow enters via the Bering
+    # Strait source term inside the timestep loop instead)
     c_bnd_L1 = get_boundary_1d(grid, 100.0)
     c_bnd_L2 = get_boundary_1d(grid, 250.0)
 
@@ -258,6 +253,7 @@ def run():
         # oceanic inflow; MacInnis 2017 Devon Ice Cap record not representative
         # of open ocean deposition. Contribution subsumed into PINN correction.
         # + get_atmospheric_source(grid, year, atm_df, DT)
+
         # time integration
         for _ in range(steps_per_month):
             C1 = upwind_step(C1, vx1, vy1, grid['dx'], grid['dy'],
@@ -265,6 +261,15 @@ def run():
             C2 = upwind_step(C2, vx2, vy2, grid['dx'], grid['dy'],
                              grid['land_mask'], DT, c_south_bnd=c_bnd_L2)
             C1 = C1 + S
+
+            # Bering Strait inflow source -- recomputed each step from the
+            # live layer-1 velocity field so the injected concentration
+            # rides on the actual monthly TOPAZ4 strait transport rather
+            # than a fixed flux. Layer 2 receives no direct strait
+            # contribution (strait is shallow; matches river treatment).
+            S_bering = get_bering_strait_source(grid, vx1, vy1, DT)
+            C1 = C1 + S_bering
+
             C1[grid['land_mask']] = 0.0
 
             # first-order decay sink (lumped: sediment burial, degradation,
