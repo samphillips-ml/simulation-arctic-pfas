@@ -296,3 +296,118 @@ mouths and the ice edge) and is treated as part of the systematic error the bias
 correction is designed to absorb, consistent with the overall framing of the
 simulation as an intentionally imperfect physics prior. TVD schemes are flagged as
 future work if a later iteration of the simulation is undertaken.
+
+## 10. Bering Strait boundary condition (replaces diffuse 60N Pacific boundary)
+
+**Decision.** Land-mask the Bering Sea south of the Bering Strait throat
+(everything south of 65.5N within the Bering Sea longitude range). The
+strait throat becomes the sole Pacific-side opening into the simulation
+domain. Pacific inflow is now driven by a velocity-weighted source term
+at the strait cells (`sources.get_bering_strait_source`), using a
+prescribed PFOA concentration of 0.05 ng/L (50 pg/L), rather than the
+old diffuse concentration applied across the full 60N Pacific edge.
+
+**Previous approach.** A flat concentration (0.025 ng/L) was applied to
+all inflow cells along the 60N parallel in the Pacific longitude range,
+via the same mechanism used for the Atlantic boundary
+(`sources.get_boundary_1d`, consumed by `advection.upwind_step`'s
+`c_south_bnd` parameter). This treated the entire wide Pacific edge as
+a single diffuse source with no link to actual strait transport, and no
+named, citable origin for the value -- unlike rivers or the Atlantic
+boundary, there was no "knob" in this region for the bias-correction
+stage to reason about.
+
+**Justification.**
+- Bering Strait is the only connection between the Bering Sea and the
+  Arctic Ocean; land-masking the Bering Sea and relocating the boundary
+  condition to the strait throat turns a diffuse, geographically
+  arbitrary edge into a true, narrow, physically meaningful opening
+  (~85 km wide in reality; a handful of cells at 0.125deg resolution).
+- Strait volume transport is exceptionally well constrained by a
+  continuous mooring record since 1997 (Woodgate, Weingartner & Lindsay
+  2012, GRL, doi:10.1029/2012GL054092): net annual throughflow ~0.7 Sv
+  (2001) increasing to ~1.1 Sv (2011), consistently northward at the
+  monthly-mean level relevant to TOPAZ4 forcing. This means the harder
+  half of the problem (the concentration, not the transport) is the
+  only thing that needed sourcing from literature.
+- Concentration value (0.05 ng/L): converging estimate from two
+  independent PFOA-specific surface-seawater datasets covering the
+  Pacific-inflow / western Arctic water mass:
+    - Cai et al. 2012 (Environ. Sci. Technol. 46(2):661-668,
+      doi:10.1021/es2026278; 4th Chinese Arctic Expedition, 2010):
+      North Pacific PFOA average 56 pg/L, range <20-100 pg/L. In the
+      Bering Sea specifically, PFPA (not PFOA) was the dominant
+      homolog -- PFOA was not the headline number there, so the
+      North Pacific grouping (not the Bering Sea ∑PFAA figure) is the
+      relevant PFOA-specific value from this paper.
+    - Yamazaki et al. 2021 (Chemosphere 272:129869,
+      doi:10.1016/j.chemosphere.2020.128803): western Arctic Ocean
+      PFOA 48-87 pg/L, explicitly noted as comparable to Cai's
+      western Arctic results.
+  Sensitivity bounds (0.02 / 0.09 ng/L, i.e. BERING_PFOA_NGPL_LOW/HIGH
+  in sources.py) span the low end of Cai's range and the high end of
+  Yamazaki's range.
+- Mechanism choice (source term vs. true clamped boundary): the
+  existing `upwind_step` southern-boundary mechanism (`c_south_bnd`)
+  only operates at the fixed domain edge (lat index 0, 60N) and has no
+  concept of an inflow boundary at an interior latitude. Implementing
+  a true clamped boundary at the strait would require restructuring
+  the upwind difference logic in advection.py to recognize an arbitrary
+  land/ocean interface mid-domain. Instead, `get_bering_strait_source`
+  reuses the existing source-injection pattern already validated for
+  10 rivers in this codebase: at each timestep, mass is injected at
+  strait throat cells sized as `concentration x inflow velocity x
+  cross-sectional area x dt`, using the live monthly TOPAZ4 velocity
+  field, restricted to cells with net northward (into-domain) flow.
+  This lets Woodgate's documented transport variability (0.7-1.1 Sv)
+  pass through naturally via the velocity field rather than being
+  hardcoded, at the cost of being an approximation to a true open
+  boundary rather than a hard clamp on in-cell concentration.
+
+**Limitations.**
+- No PFOA measurement exists from a station unambiguously inside the
+  Bering Strait throat itself; both literature anchors are regional
+  proxies (North Pacific / western Arctic) for the water mass that
+  transits the strait, not strait-specific samples.
+- Both anchor datasets are 2010-2021-era; PFOA in Pacific source
+  regions has likely declined somewhat since the earlier (2010, Cai)
+  sampling given the phase-down under the US EPA PFOA Stewardship
+  Program (2006-2015), so 0.05 ng/L may be a mild overestimate of
+  present-day inflow. Not corrected for, given comparable uncertainty
+  exists in the other boundary/source terms in this simulation.
+- Total ∑PFAA literature for the Bering Sea (Cai 2012: 340 +/- 130
+  pg/L; Li et al. 2018, doi:10.1016/j.envpol.2018.03.018: ~501 pg/L)
+  was deliberately NOT used to derive the PFOA value by scaling --
+  PFOA is a minor-to-second homolog in this region (PFPA or PFBA
+  dominate depending on the source), so scaling total PFAA would have
+  overestimated PFOA by roughly an order of magnitude.
+- Land-mask geometry (BERING_SEA_LAT_MAX = 65.5N, see grid_utils.py)
+  is a first-pass box, not hand-fit to the true Bering Sea coastline.
+  Precision here was treated as non-critical per project scope --
+  the mask only needs to plausibly isolate "south of the strait" from
+  "the strait and points north." Should be visually checked against
+  the TOPAZ4 coastline before being treated as final; see the
+  self-check printed by `grid_utils.py __main__`.
+- BERING_STRAIT_LAT_RANGE / LON_RANGE (sources.py) defining the throat
+  cells were chosen from real-world strait geography (~65.7N,
+  168.5-169.5W) with a buffer, not yet confirmed against actual
+  TOPAZ4 wet cells in that box. If the throat box and the Bering Sea
+  mask box are inconsistent, the strait could end up fully masked --
+  guarded against with a runtime check in `get_bering_strait_source`
+  (returns zero source rather than erroring) and a diagnostic warning
+  in `grid_utils.py __main__` and `sources.py __main__`, but a silent
+  zero-inflow state is still possible if both checks are skipped.
+- The discrete Bering-Sea-only PFOA values in Cai 2012 and Li 2018 sit
+  in paywalled SI tables (Table S4 for Li 2018) and were not directly
+  retrieved; if obtained later and materially different from the
+  0.02-0.09 ng/L sensitivity range used here, the central value should
+  be revisited.
+
+**Status.** Implemented in grid_utils.py (land mask), sources.py
+(BERING_PFOA_NGPL constants, get_bering_strait_source), and
+simulate.py (wired into the layer-1 timestep loop, recomputed each
+step from the live velocity field). Pending: full rerun and CFL/
+stability check against actual TOPAZ4 strait velocities; visual
+confirmation of land-mask and strait-box geometry against the real
+coastline; confirmation that no training/validation observation
+stations fall inside the newly masked Bering Sea region.
