@@ -15,7 +15,6 @@ EARTH_RADIUS_M   = 6371000.0
 LAT_MIN          = 60.0        # southern boundary of simulation domain
 LAT_MAX          = 90.0
 LAYER_SPLIT_M    = 200.0       # layer 1: 0-200m, layer 2: 250-4000m
-<<<<<<< HEAD
 
 # Bering Sea land-mask box -- everything south of the Bering Strait
 # throat is masked to land, leaving the strait itself as the sole
@@ -60,10 +59,6 @@ def _bering_sea_mask(lat, lon):
     return lat_mask[:, np.newaxis] & lon_mask[np.newaxis, :]
 
 
-=======
-
-
->>>>>>> 04d14f0 (added notes and the advection code)
 def load_grid(topaz4_path):
     """
     Load grid metadata from TOPAZ4 NetCDF file.
@@ -123,7 +118,6 @@ def load_grid(topaz4_path):
     model_depth = md_full[lat_idx_min:lat_idx_max, :]              # (241, 2880)
     land_mask  = np.isnan(model_depth)                             # True = land
 
-<<<<<<< HEAD
     # mask polar cap above 89N -- tiny dx cells cause numerical instability
     # on regular lat/lon grid; no observations exist above 89N in training data
     POLAR_CAP_MASK_LAT = 89.0
@@ -134,8 +128,6 @@ def load_grid(topaz4_path):
     # the diffuse 60N Pacific boundary. See DECISIONS.md sec. 10.
     land_mask[_bering_sea_mask(lat, lon)] = True
 
-=======
->>>>>>> 04d14f0 (added notes and the advection code)
     # --- layer split ---
     # depth[19] = 200.0 m exactly; layer 1 includes 200m, layer 2 starts at 250m
     layer_split_idx = int(np.searchsorted(depth, LAYER_SPLIT_M))
