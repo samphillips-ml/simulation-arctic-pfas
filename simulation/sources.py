@@ -72,14 +72,25 @@ BERING_PFOA_NGPL          = 0.05    # central value, ng/L
 BERING_PFOA_NGPL_LOW      = 0.02    # sensitivity bound, ng/L
 BERING_PFOA_NGPL_HIGH     = 0.09    # sensitivity bound, ng/L
 
-# Bering Strait throat cells -- narrow lat/lon band spanning the real
-# strait pinch point (~65.7N, 168.5-169.5W) with a small buffer either
-# side to catch however TOPAZ4 resolves the channel at 0.125 deg.
-# Must sit north of grid_utils.BERING_SEA_LAT_MAX so the cells survive
-# land-masking. Re-check against actual wet cells before treating as
-# final -- see grid_utils.py __main__ self-check.
-BERING_STRAIT_LAT_RANGE = (65.5, 66.2)
-BERING_STRAIT_LON_RANGE = (-170.5, -167.0)
+# Bering Strait throat cells -- narrow lat/lon band spanning TOPAZ4's
+# actual resolved Pacific-side opening.
+#
+# NOTE: the real-world strait (~65.7N, 168.5-169.5W) is NOT open water
+# in TOPAZ4 at 0.125 deg -- diagnostic check (diag_bering.py) against
+# the raw model_depth mask found zero wet cells anywhere in the
+# -172 to -165W band south of 66.375N. The model's coastline geometry
+# pushes the effective channel north of the true strait, likely because
+# the real ~85 km wide, Diomede-Island-obstructed channel is narrower
+# than this grid resolves. This box targets TOPAZ4's actual opening
+# (first wet row at 66.375N, widening northward) rather than the
+# real-world coordinate. See DECISIONS.md sec. 10 for the full
+# discussion and the implied limitation (the source term now
+# represents Pacific inflow somewhat north of the literal strait,
+# not the strait itself).
+# Must sit north of grid_utils.BERING_SEA_LAT_MAX (64.5) so the cells
+# survive land-masking.
+BERING_STRAIT_LAT_RANGE = (66.375, 67.0)
+BERING_STRAIT_LON_RANGE = (-172.0, -166.625)
 
 
 def _compute_dz(depth):

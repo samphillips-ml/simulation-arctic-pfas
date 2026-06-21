@@ -20,16 +20,28 @@ LAYER_SPLIT_M    = 200.0       # layer 1: 0-200m, layer 2: 250-4000m
 # throat is masked to land, leaving the strait itself as the sole
 # Pacific-side opening into the domain. Box bounds chosen to fully
 # remove the Bering Sea (St. Lawrence Island, Norton Sound, Gulf of
-# Anadyr, Anadyr Strait) while leaving the strait throat (~65.7N,
-# 168.5-169.5W) open. Longitude range expressed in the -180..180
-# convention used by the TOPAZ4 grid; wraps are not needed here since
-# the Bering Sea does not cross the antimeridian in this convention
-# (it spans roughly 163E to -165W, i.e. positive lon > 163 OR
-# negative lon > -165, see BERING_SEA_LON_RANGES below).
-# Precision not critical -- see DECISIONS.md sec. 10. Bounds should be
-# re-checked visually against the TOPAZ4 coastline before being treated
-# as final.
-BERING_SEA_LAT_MAX        = 65.5   # mask everything south of this
+# Anadyr, Anadyr Strait) while leaving the strait throat open.
+#
+# IMPORTANT: TOPAZ4 at 0.125 deg does not resolve the real-world strait
+# location (~65.7N) as an open channel -- diagnostic check
+# (diag_bering.py) against the raw model_depth mask found zero wet
+# cells in the -172 to -165W band at any latitude south of 66.375N.
+# The first open row appears at 66.375N (7 wet cells, -170.125 to
+# -169.0). TOPAZ4's coastline geometry pushes the effective Pacific
+# opening north of the true strait location, presumably because the
+# real channel (~85 km wide, obstructed by the Diomede Islands) is too
+# narrow/shallow to resolve at this grid spacing. BERING_SEA_LAT_MAX
+# is therefore set well south of the actual TOPAZ4 opening (64.5N,
+# comfortable margin below 66.375N) rather than at the real-world
+# strait latitude, to avoid masking the only channel TOPAZ4 actually
+# provides. See DECISIONS.md sec. 10 and sources.py
+# BERING_STRAIT_LAT_RANGE for the corresponding throat-cell box.
+# Longitude range expressed in the -180..180 convention used by the
+# TOPAZ4 grid; wraps are not needed here since the Bering Sea does not
+# cross the antimeridian in this convention (it spans roughly 163E to
+# -165W, i.e. positive lon > 163 OR negative lon > -165, see
+# BERING_SEA_LON_RANGES below).
+BERING_SEA_LAT_MAX        = 64.5   # mask everything south of this
 BERING_SEA_LON_RANGES     = [(163.0, 180.0), (-180.0, -165.0)]  # deg E
 
 
@@ -175,12 +187,14 @@ if __name__ == '__main__':
           f'({g["depth"][g["layer_split_idx"] + 1]:.0f} - '
           f'{g["depth"][-1]:.0f} m)')
 
-    # sanity check: confirm strait throat remains open (a handful of wet
-    # cells should exist near 65.7N, 168.5-169.5W)
-    strait_lat_idx = np.argmin(np.abs(g['lat'] - 65.7))
-    strait_lon_mask = (g['lon'] >= -169.5) & (g['lon'] <= -168.5)
+    # sanity check: confirm strait throat remains open. NOTE: TOPAZ4
+    # does not resolve the real-world strait latitude (~65.7N) as open
+    # water -- diag_bering.py found the first open row at 66.375N. This
+    # check tests the actual TOPAZ4 opening, not the real-world location.
+    strait_lat_idx = np.argmin(np.abs(g['lat'] - 66.5))
+    strait_lon_mask = (g['lon'] >= -171.5) & (g['lon'] <= -167.0)
     strait_wet = (~g['land_mask'][strait_lat_idx, strait_lon_mask]).sum()
     print(f'\nBering Strait throat check (lat idx {strait_lat_idx}, '
           f'lat={g["lat"][strait_lat_idx]:.3f}N):')
-    print(f'  wet cells in 168.5-169.5W band: {strait_wet}  '
+    print(f'  wet cells in 171.5-167.0W band: {strait_wet}  '
           f'(expect > 0 -- if 0, BERING_SEA_LAT_MAX is masking the strait itself)')
