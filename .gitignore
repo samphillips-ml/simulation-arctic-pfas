@@ -31,3 +31,5 @@ papers/*.pdf
 frame_preview.py
 presentation_video.py
 *.mp4
+
+sam-phillips/
